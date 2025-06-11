@@ -42,6 +42,6 @@ Gem::Specification.new do |spec|
   spec.add_dependency "googleauth", "~> 1.0"
   spec.add_dependency "google-cloud-env", "~> 1.2.1"
   spec.add_dependency "google-logging-utils", "~> 0.1"
-  spec.add_dependency "google-protobuf", ">= 3.25", "< 5.a"
+  spec.add_dependency "google-protobuf", ">= 3.23.4", "< 5.a"
   spec.add_dependency "grpc", "~> 1.58.0"
 end
