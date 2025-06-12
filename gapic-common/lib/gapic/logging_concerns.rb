@@ -37,17 +37,17 @@ module Gapic
         /^#{Regexp.escape __dir__}/
       ].freeze
 
-      def initialize logger: nil, **kwargs
-        @logger = logger
-        @kwargs = kwargs
+      def initialize(args = {})
+        @logger = args[:logger]
+        @kwargs = args.reject { |k, _| k == :logger }
       end
 
-      def log severity
+      def log(severity)
         return unless @logger
         locations = caller_locations
-        @logger.add severity do
-          builder = LogEntryBuilder.new(**@kwargs)
-          builder.set_source_location_from locations
+        @logger.add(severity) do
+          builder = LogEntryBuilder.new(@kwargs)
+          builder.set_source_location_from(locations)
           yield builder
           builder.build
         rescue StandardError
@@ -55,12 +55,12 @@ module Gapic
         end
       end
 
-      def info &block
-        log Logger::INFO, &block
+      def info(&block)
+        log(Logger::INFO, &block)
       end
 
-      def debug &block
-        log Logger::DEBUG, &block
+      def debug(&block)
+        log(Logger::DEBUG, &block)
       end
 
       ##
@@ -68,14 +68,11 @@ module Gapic
       # Builder for a log entry, passed to {StubLogger#log}.
       #
       class LogEntryBuilder
-        def initialize system_name: nil,
-                       service: nil,
-                       endpoint: nil,
-                       client_id: nil
-          @system_name = system_name
-          @service = service
-          @endpoint = endpoint
-          @client_id = client_id
+        def initialize(args = {})
+          @system_name = args[:system_name]
+          @service = args[:service]
+          @endpoint = args[:endpoint]
+          @client_id = args[:client_id]
           @message = nil
           @caller_locations = caller_locations
           @fields = { "clientId" => @client_id }
@@ -93,39 +90,45 @@ module Gapic
 
         attr_reader :fields
 
-        def set name, value
+        def set(name, value)
           fields[name] = value
         end
 
         def set_system_name
-          set "system", system_name
+          set("system", system_name)
         end
 
         def set_service
-          set "serviceName", service
+          set("serviceName", service)
         end
 
-        def set_credentials_fields creds
-          creds = creds.client if creds.respond_to? :client
-          set "credentialsId", creds.object_id
-          set "credentialsType", creds.class.name
-          set "credentialsScope", creds.scope if creds.respond_to? :scope
-          set "useSelfSignedJWT", creds.enable_self_signed_jwt? if creds.respond_to? :enable_self_signed_jwt?
-          set "universeDomain", creds.universe_domain if creds.respond_to? :universe_domain
+        def set_credentials_fields(creds)
+          creds = creds.client if creds.respond_to?(:client)
+          set("credentialsId", creds.object_id)
+          set("credentialsType", creds.class.name)
+          set("credentialsScope", creds.scope) if creds.respond_to?(:scope)
+          set("useSelfSignedJWT", creds.enable_self_signed_jwt?) if creds.respond_to?(:enable_self_signed_jwt?)
+          set("universeDomain", creds.universe_domain) if creds.respond_to?(:universe_domain)
         end
 
         def source_location
-          @source_location ||= Google::Logging::SourceLocation.for_caller omit_files: OMIT_FILES,
-                                                                          locations: @caller_locations
+          @source_location ||= Google::Logging::SourceLocation.for_caller(
+            omit_files: OMIT_FILES,
+            locations: @caller_locations
+          )
         end
 
-        def set_source_location_from locations
+        def set_source_location_from(locations)
           @caller_locations = locations
           @source_location = nil
         end
 
         def build
-          Google::Logging::Message.from message: message, source_location: source_location, fields: fields
+          Google::Logging::Message.from(
+            message: message,
+            source_location: source_location,
+            fields: fields
+          )
         end
       end
     end
@@ -134,33 +137,31 @@ module Gapic
     # @private
     # Initialize logging concerns.
     #
-    def setup_logging logger: :default,
-                      stream: nil,
-                      formatter: nil,
-                      level: nil,
-                      system_name: nil,
-                      service: nil,
-                      endpoint: nil,
-                      client_id: nil
-      service = LoggingConcerns.normalize_service service
-      system_name = LoggingConcerns.normalize_system_name system_name
+    def setup_logging(args = {})
+      service = LoggingConcerns.normalize_service(args[:service])
+      system_name = LoggingConcerns.normalize_system_name(args[:system_name])
       logging_env = ENV["GOOGLE_SDK_RUBY_LOGGING_GEMS"].to_s.downcase
-      logger = nil if ["false", "none"].include? logging_env
-      if logger == :default
-        logger = nil
-        if ["true", "all"].include?(logging_env) || logging_env.split(",").include?(system_name)
-          stream ||= $stderr
-          level ||= "DEBUG"
-          formatter ||= Google::Logging::StructuredFormatter.new if Google::Cloud::Env.get.logging_agent_expected?
-          logger = Logger.new stream, progname: system_name, level: level, formatter: formatter
+      logger = args[:logger] == :default ? nil : args[:logger]
+      logger = nil if ["false", "none"].include?(logging_env)
+
+      if args[:logger] == :default && (["true", "all"].include?(logging_env) || logging_env.split(",").include?(system_name))
+        stream = args[:stream] || $stderr
+        level = args[:level] || "DEBUG"
+        formatter = args[:formatter]
+        unless formatter
+          formatter = Google::Logging::StructuredFormatter.new if Google::Cloud::Env.get.logging_agent_expected?
         end
+        logger = Logger.new(stream, progname: system_name, level: level, formatter: formatter)
       end
+
       @logger = logger
-      @stub_logger = StubLogger.new logger: logger,
-                                    system_name: system_name,
-                                    service: service,
-                                    endpoint: endpoint,
-                                    client_id: client_id
+      @stub_logger = StubLogger.new(
+        logger: logger,
+        system_name: system_name,
+        service: service,
+        endpoint: args[:endpoint],
+        client_id: args[:client_id]
+      )
     end
 
     # @private
@@ -169,19 +170,19 @@ module Gapic
     class << self
       # @private
       def random_uuid4
-        ary = Random.bytes 16
-        ary.setbyte 6, ((ary.getbyte(6) & 0x0f) | 0x40)
-        ary.setbyte 8, ((ary.getbyte(8) & 0x3f) | 0x80)
-        ary.unpack("H8H4H4H4H12").join "-"
+        ary = Random.bytes(16)
+        ary.setbyte(6, ((ary.getbyte(6) & 0x0f) | 0x40))
+        ary.setbyte(8, ((ary.getbyte(8) & 0x3f) | 0x80))
+        ary.unpack("H8H4H4H4H12").join("-")
       end
 
       # @private
-      def normalize_system_name input
+      def normalize_system_name(input)
         case input
         when String
           input
         when Class
-          input.name.split("::")[..-3]
+          input.name.split("::")[0..-3]
                .map { |elem| elem.scan(/[A-Z][A-Z]*(?=[A-Z][a-z0-9]|$)|[A-Z][a-z0-9]+/).map(&:downcase).join("_") }
                .join("-")
         else
@@ -190,18 +191,18 @@ module Gapic
       end
 
       # @private
-      def normalize_service input
+      def normalize_service(input)
         case input
         when String
           input
         when Class
-          mod = input.name.split("::")[..-2].inject(Object) { |m, n| m.const_get n }
-          if mod.const_defined? "Service"
+          mod = input.name.split("::")[0..-2].inject(Object) { |m, n| m.const_get(n) }
+          if mod.const_defined?("Service")
             mod.const_get("Service").service_name
           else
-            name_segments = input.name.split("::")[..-3]
-            mod = name_segments.inject(Object) { |m, n| m.const_get n }
-            name_segments.join "." if mod.const_defined? "Rest"
+            name_segments = input.name.split("::")[0..-3]
+            mod = name_segments.inject(Object) { |m, n| m.const_get(n) }
+            name_segments.join(".") if mod.const_defined?("Rest")
           end
         end
       end
